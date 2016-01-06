@@ -128,6 +128,13 @@ int **jerasure_dumb_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix);
 int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix);
 int ***jerasure_generate_schedule_cache(int k, int m, int w, int *bitmatrix, int smart);
 
+/*
+ * No Memory Alloc
+ */
+int *jerasure_matrix_to_bitmatrix_noalloc(int k, int m, int w, int *matrix, int *bitmatrix);
+int **jerasure_dumb_bitmatrix_to_schedule_noalloc(int k, int m, int w, int *bitmatrix, int **schedule);
+int **jerasure_smart_bitmatrix_to_schedule_noalloc(int k, int m, int w, int *bitmatrix, int **schedule);
+
 void jerasure_free_schedule(int **schedule);
 void jerasure_free_schedule_cache(int k, int m, int ***cache);
 
@@ -205,6 +212,11 @@ int jerasure_make_decoding_bitmatrix(int k, int m, int w, int *matrix, int *eras
                                   int *decoding_matrix, int *dm_ids);
 
 int *jerasure_erasures_to_erased(int k, int m, int *erasures);
+
+/*
+ * No Memory Alloc
+ */
+int *jerasure_erasures_to_erased_noalloc(int k, int m, int *erasures, int *erased);
 
 /* ------------------------------------------------------------ */
 /* These perform dot products and schedules. -------------------*/

@@ -54,6 +54,13 @@ extern void reed_sol_galois_w08_region_multby_2(char *region, int nbytes);
 extern void reed_sol_galois_w16_region_multby_2(char *region, int nbytes);
 extern void reed_sol_galois_w32_region_multby_2(char *region, int nbytes);
 
+/*
+ * No Memory Alloc
+ */
+extern int *reed_sol_vandermonde_coding_matrix_noalloc(int k, int m, int w, int *matrix);
+extern int *reed_sol_extended_vandermonde_matrix_noalloc(int rows, int cols, int w, int *matrix);
+extern int *reed_sol_big_vandermonde_distribution_matrix_noalloc(int rows, int cols, int w, int *matrix);
+extern int *reed_sol_r6_coding_matrix_noalloc(int k, int w, int *matrix);
 #ifdef __cplusplus
 }
 #endif

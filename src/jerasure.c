@@ -98,7 +98,8 @@ void jerasure_print_bitmatrix(int *m, int rows, int cols, int w)
 
 int jerasure_make_decoding_matrix(int k, int m, int w, int *matrix, int *erased, int *decoding_matrix, int *dm_ids)
 {
-  int i, j, *tmpmat;
+  int i, j;
+  int tmpmat[k*k];
 
   j = 0;
   for (i = 0; j < k; i++) {
@@ -108,8 +109,6 @@ int jerasure_make_decoding_matrix(int k, int m, int w, int *matrix, int *erased,
     }
   }
 
-  tmpmat = talloc(int, k*k);
-  if (tmpmat == NULL) { return -1; }
   for (i = 0; i < k; i++) {
     if (dm_ids[i] < k) {
       for (j = 0; j < k; j++) tmpmat[i*k+j] = 0;
@@ -122,15 +121,15 @@ int jerasure_make_decoding_matrix(int k, int m, int w, int *matrix, int *erased,
   }
 
   i = jerasure_invert_matrix(tmpmat, decoding_matrix, k, w);
-  free(tmpmat);
   return i;
 }
 
 /* Internal Routine */
 int jerasure_make_decoding_bitmatrix(int k, int m, int w, int *matrix, int *erased, int *decoding_matrix, int *dm_ids)
 {
-  int i, j, *tmpmat;
+  int i, j;
   int index, mindex;
+  int tmpmat[k*k*w*w];
 
   j = 0;
   for (i = 0; j < k; i++) {
@@ -140,8 +139,6 @@ int jerasure_make_decoding_bitmatrix(int k, int m, int w, int *matrix, int *eras
     }
   }
 
-  tmpmat = talloc(int, k*k*w*w);
-  if (tmpmat == NULL) { return -1; }
   for (i = 0; i < k; i++) {
     if (dm_ids[i] < k) {
       index = i*k*w*w;
@@ -161,7 +158,6 @@ int jerasure_make_decoding_bitmatrix(int k, int m, int w, int *matrix, int *eras
   }
 
   i = jerasure_invert_bitmatrix(tmpmat, decoding_matrix, k*w);
-  free(tmpmat);
   return i;
 }
 
@@ -275,15 +271,9 @@ int jerasure_matrix_decode(int k, int m, int w, int *matrix, int row_k_ones, int
 }
 
 
-int *jerasure_matrix_to_bitmatrix(int k, int m, int w, int *matrix) 
+inline int *jerasure_matrix_to_bitmatrix_setup(int k, int m, int w, int *matrix, int *bitmatrix) 
 {
-  int *bitmatrix;
   int rowelts, rowindex, colindex, elt, i, j, l, x;
-
-  if (matrix == NULL) { return NULL; }
-
-  bitmatrix = talloc(int, k*m*w*w);
-  if (!bitmatrix) return NULL;
 
   rowelts = k * w;
   rowindex = 0;
@@ -303,6 +293,24 @@ int *jerasure_matrix_to_bitmatrix(int k, int m, int w, int *matrix)
     rowindex += rowelts * w;
   }
   return bitmatrix;
+}
+
+int *jerasure_matrix_to_bitmatrix(int k, int m, int w, int *matrix) 
+{
+    int *bitmatrix;
+    if (matrix == NULL) { return NULL; }
+
+    bitmatrix = talloc(int, k*m*w*w);
+    if (!bitmatrix) return NULL;
+
+    return jerasure_matrix_to_bitmatrix_setup(k, m, w, matrix, bitmatrix);
+}
+
+int *jerasure_matrix_to_bitmatrix_noalloc(int k, int m, int w, int *matrix, int* bitmatrix) 
+{
+    if (matrix == NULL) { return NULL; }
+    if (bitmatrix == NULL) { return NULL; }
+    return jerasure_matrix_to_bitmatrix_setup(k, m, w, matrix, bitmatrix);
 }
 
 void jerasure_matrix_encode(int k, int m, int w, int *matrix,
@@ -523,19 +531,13 @@ int jerasure_invertible_matrix(int *mat, int rows, int w)
   return 1;
 }
 
-/* Converts a list-style version of the erasures into an array of k+m elements
-   where the element = 1 if the index has been erased, and zero otherwise */
-
-int *jerasure_erasures_to_erased(int k, int m, int *erasures)
+inline int *jerasure_erasures_to_erased_setup(int k, int m, int *erasures, int *erased)
 {
   int td;
   int t_non_erased;
-  int *erased;
   int i;
 
   td = k+m;
-  erased = talloc(int, td);
-  if (erased == NULL) return NULL;
   t_non_erased = td;
 
   for (i = 0; i < td; i++) erased[i] = 0;
@@ -545,12 +547,30 @@ int *jerasure_erasures_to_erased(int k, int m, int *erasures)
       erased[erasures[i]] = 1;
       t_non_erased--;
       if (t_non_erased < k) {
-        free(erased);
         return NULL;
       }
     }
   }
   return erased;
+}
+
+int *jerasure_erasures_to_erased_noalloc(int k, int m, int *erasures, int *erased)
+{
+   return jerasure_erasures_to_erased_setup(k, m, erasures, erased); 
+}
+/* Converts a list-style version of the erasures into an array of k+m elements
+   where the element = 1 if the index has been erased, and zero otherwise */
+
+int *jerasure_erasures_to_erased(int k, int m, int *erasures)
+{
+  int *erased;
+  erased = talloc(int, k+m);
+  if (erased == NULL) return NULL;
+
+  int *ret = NULL;
+  ret = jerasure_erasures_to_erased_setup(k, m, erasures, erased);
+  if (ret == NULL) free(erased);
+  return ret;
 }
   
 void jerasure_free_schedule(int **schedule)
@@ -1231,27 +1251,22 @@ void jerasure_do_scheduled_operations(char **ptrs, int **operations, int packets
 void jerasure_schedule_encode(int k, int m, int w, int **schedule,
                                    char **data_ptrs, char **coding_ptrs, int size, int packetsize)
 {
-  char **ptr_copy;
+  char* ptr_copy[k+m];
   int i, tdone;
 
-  ptr_copy = talloc(char *, (k+m));
   for (i = 0; i < k; i++) ptr_copy[i] = data_ptrs[i];
   for (i = 0; i < m; i++) ptr_copy[i+k] = coding_ptrs[i];
   for (tdone = 0; tdone < size; tdone += packetsize*w) {
     jerasure_do_scheduled_operations(ptr_copy, schedule, packetsize);
     for (i = 0; i < k+m; i++) ptr_copy[i] += (packetsize*w);
   }
-  free(ptr_copy);
 }
     
-int **jerasure_dumb_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
+int **jerasure_dumb_bitmatrix_to_schedule_setup(int k, int m, int w, int *bitmatrix, int **operations)
 {
-  int **operations;
   int op;
   int index, optodo, i, j;
 
-  operations = talloc(int *, k*m*w*w+1);
-  if (!operations) return NULL;
   op = 0;
   
   index = 0;
@@ -1259,11 +1274,6 @@ int **jerasure_dumb_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
     optodo = 0;
     for (j = 0; j < k*w; j++) {
       if (bitmatrix[index]) {
-        operations[op] = talloc(int, 5);
-	if (!operations[op]) {
-	  // -ENOMEM
-          goto error;
-        }
         operations[op][4] = optodo;
         operations[op][0] = j/w;
         operations[op][1] = j%w;
@@ -1271,70 +1281,50 @@ int **jerasure_dumb_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
         operations[op][3] = i%w;
         optodo = 1;
         op++;
-        
       }
       index++;
     }
   }
-  operations[op] = talloc(int, 5);
-  if (!operations[op]) {
-    // -ENOMEM
-    goto error;
-  }
+
   operations[op][0] = -1;
   return operations;
-
-error:
-  for (i = 0; i <= op; i++) {
-    free(operations[op]);
-  }
-  free(operations);
-  return NULL;
 }
 
-int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
+int **jerasure_dumb_bitmatrix_to_schedule_noalloc(int k, int m, int w, int *bitmatrix, int **operations)
+{
+    return jerasure_dumb_bitmatrix_to_schedule_setup(k, m, w, bitmatrix, operations);
+
+}
+
+int **jerasure_dumb_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
 {
   int **operations;
+  operations = talloc(int *, k*m*w*w+1);
+  if (!operations) return NULL;
+    int i;
+    for (i = 0; i < k*m*w*w+1; ++i) {
+        operations[i] = talloc(int , 5);
+        if (!operations[i]) return NULL;
+    }
+    return jerasure_dumb_bitmatrix_to_schedule_setup(k, m, w, bitmatrix, operations);
+}
+
+int **jerasure_smart_bitmatrix_to_schedule_setup(int k, int m, int w, int *bitmatrix, int** operations)
+{
   int op;
   int i, j;
-  int *diff, *from, *b1, *flink, *blink;
+  int diff[m*w];
+  int from[m*w];
+  int flink[m*w];
+  int blink[m*w];
+  int *b1;
   int *ptr, no, row;
   int optodo;
   int bestrow = 0, bestdiff, top;
 
 /*   printf("Scheduling:\n\n");
   jerasure_print_bitmatrix(bitmatrix, m*w, k*w, w); */
-
-  operations = talloc(int *, k*m*w*w+1);
-  if (!operations) return NULL;
   op = 0;
-  
-  diff = talloc(int, m*w);
-  if (!diff) {
-    free(operations);
-    return NULL;
-  }
-  from = talloc(int, m*w);
-  if (!from) {
-    free(operations);
-    free(diff);
-    return NULL;
-  }
-  flink = talloc(int, m*w);
-  if (!flink) {
-    free(operations);
-    free(diff);
-    free(from);
-    return NULL;
-  }
-  blink = talloc(int, m*w);
-  if (!blink) {
-    free(operations);
-    free(diff);
-    free(from);
-    free(flink);
-    return NULL;
-  }
 
   ptr = bitmatrix;
 
@@ -1377,8 +1367,6 @@ int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
       optodo = 0;
       for (j = 0; j < k*w; j++) {
         if (ptr[j]) {
-          operations[op] = talloc(int, 5);
-          if (!operations[op]) goto error;
           operations[op][4] = optodo;
           operations[op][0] = j/w;
           operations[op][1] = j%w;
@@ -1389,8 +1377,6 @@ int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
         }
       }
     } else {
-      operations[op] = talloc(int, 5);
-      if (!operations[op]) goto error;
       operations[op][4] = 0;
       operations[op][0] = k+from[row]/w;
       operations[op][1] = from[row]%w;
@@ -1400,8 +1386,6 @@ int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
       b1 = bitmatrix + from[row]*k*w;
       for (j = 0; j < k*w; j++) {
         if (ptr[j] ^ b1[j]) {
-          operations[op] = talloc(int, 5);
-          if (!operations[op]) goto error;
           operations[op][4] = 1;
           operations[op][0] = j/w;
           operations[op][1] = j%w;
@@ -1428,26 +1412,24 @@ int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
     }
   }
   
-  operations[op] = talloc(int, 5);
-  if (!operations[op]) goto error;
   operations[op][0] = -1;
-  free(from);
-  free(diff);
-  free(blink);
-  free(flink);
-
   return operations;
+}
 
-error:
-  for (i = 0; i <= op; i++) {
-    free(operations[op]);
-  }
-  free(operations);
-  free(from);
-  free(diff);
-  free(blink);
-  free(flink);
-  return NULL;
+int **jerasure_smart_bitmatrix_to_schedule_noalloc(int k, int m, int w, int *bitmatrix, int **operations)
+{
+    return jerasure_smart_bitmatrix_to_schedule_setup(k, m, w, bitmatrix, operations);
+}
+int **jerasure_smart_bitmatrix_to_schedule(int k, int m, int w, int *bitmatrix)
+{
+    int **operations = talloc(int*, k*m*w*w+1);
+    if (!operations) return NULL;
+    int i;
+    for (i = 0; i < k*m*w*w+1; ++i) {
+        operations[i] = talloc(int , 5);
+        if (!operations[i]) return NULL;
+    }
+    return jerasure_smart_bitmatrix_to_schedule_setup(k, m, w, bitmatrix, operations);
 }
 
 void jerasure_bitmatrix_encode(int k, int m, int w, int *bitmatrix,
