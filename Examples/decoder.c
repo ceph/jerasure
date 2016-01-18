@@ -142,7 +142,7 @@ int main (int argc, char **argv) {
 	assert(curdir == getcwd(curdir, 1000));
 	
 	/* Begin recreation of file names */
-	cs1 = (char*)malloc(sizeof(char)*strlen(argv[1]));
+	cs1 = (char*)malloc(sizeof(char)*strlen(argv[1]) + 1);
 	cs2 = strrchr(argv[1], '/');
 	if (cs2 != NULL) {
 		cs2++;
@@ -158,7 +158,7 @@ int main (int argc, char **argv) {
 	} else {
            extension = strdup("");
         }	
-	fname = (char *)malloc(sizeof(char*)*(100+strlen(argv[1])+20));
+	fname = (char *)malloc(sizeof(char*)*(100+strlen(argv[1])+20+1));
 
 	/* Read in parameters from metadata file */
 	sprintf(fname, "%s/Coding/%s_meta.txt", curdir, cs1);
