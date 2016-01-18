@@ -270,6 +270,197 @@ int jerasure_matrix_decode(int k, int m, int w, int *matrix, int row_k_ones, int
   return 0;
 }
 
+int jerasure_matrix_decode_data(int k, int m, int w, int *matrix, int row_k_ones, int *erasures,
+        char **data_ptrs, char **coding_ptrs, int size)
+{
+    int i, edd, lastdrive;
+    int *erased;
+    int erased_n[k+m+1];
+
+    if (w != 8 && w != 16 && w != 32) return -1;
+
+    erased = jerasure_erasures_to_erased_noalloc(k, m, erasures, erased_n);
+    if (erased == NULL) return -1;
+
+    /* Find the number of data drives failed */
+
+    lastdrive = k;
+
+    edd = 0;
+    for (i = 0; i < k; i++) {
+        if (erased[i]) {
+            edd++;
+            lastdrive = i;
+        }
+    }
+
+    /* You only need to create the decoding matrix in the following cases:
+
+       1. edd > 0 and row_k_ones is false.
+       2. edd > 0 and row_k_ones is true and coding device 0 has been erased.
+       3. edd > 1
+
+       We're going to use lastdrive to denote when to stop decoding data.
+       At this point in the code, it is equal to the last erased data device.
+       However, if we can't use the parity row to decode it (i.e. row_k_ones=0
+       or erased[k] = 1, we're going to set it to k so that the decoding
+       pass will decode all data.
+       */
+
+    if (!row_k_ones || erased[k]) lastdrive = k;
+
+    int dm_ids[k];
+    int decoding_matrix[k*k];
+
+    if (edd > 1 || (edd > 0 && (!row_k_ones || erased[k]))) {
+        if (jerasure_make_decoding_matrix(k, m, w, matrix, erased, decoding_matrix, dm_ids) < 0) {
+            return -1;
+        }
+    }
+
+    /* Decode the data drives.
+       If row_k_ones is true and coding device 0 is intact, then only decode edd-1 drives.
+       This is done by stopping at lastdrive.
+       We test whether edd > 0 so that we can exit the loop early if we're done.
+       */
+
+    for (i = 0; edd > 0 && i < lastdrive; i++) {
+        if (erased[i]) {
+            jerasure_matrix_dotprod(k, w, decoding_matrix+(i*k), dm_ids, i, data_ptrs, coding_ptrs, size);
+            edd--;
+        }
+    }
+
+    /* Then if necessary, decode drive lastdrive */
+
+    int tmpids[k];
+    if (edd > 0) {
+        for (i = 0; i < k; i++) {
+            tmpids[i] = (i < lastdrive) ? i : i+1;
+        }
+        jerasure_matrix_dotprod(k, w, matrix, tmpids, lastdrive, data_ptrs, coding_ptrs, size);
+    }
+
+    return 0;
+}
+
+void convert_select(int k, int m, int* selected, int *data_fix, int *data_fix_size, int *code_fix, int *code_fix_size) {
+    int i;
+    *data_fix_size = 0;
+    *code_fix_size = 0;
+    for(i = 0; i < k + m; ++i) {
+        if (selected[i] == -1) break;
+        else if (selected[i] < k) {
+            data_fix[*data_fix_size] = selected[i];
+            *data_fix_size += 1;
+        } else {
+            code_fix[*code_fix_size] = selected[i];
+            *code_fix_size += 1;
+        }
+    }
+}
+
+int jerasure_matrix_decode_selected(int k, int m, int w, int *matrix, int row_k_ones, int *erasures, int *selected,
+        char **data_ptrs, char **coding_ptrs, int size)
+{
+    int i, edd, lastdrive;
+    int *erased;
+    int erased_n[k+m+1];
+
+    if (w != 8 && w != 16 && w != 32) return -1;
+
+    erased = jerasure_erasures_to_erased_noalloc(k, m, erasures, erased_n);
+    if (erased == NULL) return -1;
+
+    /* Find the number of data drives failed */
+
+    lastdrive = k;
+
+    edd = 0;
+    for (i = 0; i < k; i++) {
+        if (erased[i]) {
+            edd++;
+            lastdrive = i;
+        }
+    }
+
+    /* You only need to create the decoding matrix in the following cases:
+
+       1. edd > 0 and row_k_ones is false.
+       2. edd > 0 and row_k_ones is true and coding device 0 has been erased.
+       3. edd > 1
+
+       We're going to use lastdrive to denote when to stop decoding data.
+       At this point in the code, it is equal to the last erased data device.
+       However, if we can't use the parity row to decode it (i.e. row_k_ones=0
+       or erased[k] = 1, we're going to set it to k so that the decoding
+       pass will decode all data.
+       */
+
+    if (!row_k_ones || erased[k]) lastdrive = k;
+
+    int dm_ids[k];
+    int decoding_matrix[k*k];
+
+    if (edd > 1 || (edd > 0 && (!row_k_ones || erased[k]))) {
+        if (jerasure_make_decoding_matrix(k, m, w, matrix, erased, decoding_matrix, dm_ids) < 0) {
+            return -1;
+        }
+    }
+
+    /* Setup to indicate which blocks have to be repaired
+
+       If any code block need to be fixed,
+       all data missing blocks have to be repaired
+       */
+    int data_fix_size, code_fix_size = 0;
+    int data_fix[k];
+    int code_fix[m];
+    convert_select(k, m, selected, data_fix, &data_fix_size, code_fix, &code_fix_size);
+    char fix_all_data = 0;
+    int target;
+    if ((data_fix_size == edd) || (code_fix_size > 0))
+        fix_all_data = 1;
+
+    if (fix_all_data == 1) {
+        /* Decode the data drives.
+           If row_k_ones is true and coding device 0 is intact, then only decode edd-1 drives.
+           This is done by stopping at lastdrive.
+           We test whether edd > 0 so that we can exit the loop early if we're done.
+           */
+
+        for (i = 0; edd > 0 && i < lastdrive; i++) {
+            if (erased[i]) {
+                jerasure_matrix_dotprod(k, w, decoding_matrix+(i*k), dm_ids, i, data_ptrs, coding_ptrs, size);
+                edd--;
+            }
+        }
+
+        /* Then if necessary, decode drive lastdrive */
+
+    int tmpids[k];
+        if (edd > 0) {
+            for (i = 0; i < k; i++) {
+                tmpids[i] = (i < lastdrive) ? i : i+1;
+            }
+            jerasure_matrix_dotprod(k, w, matrix, tmpids, lastdrive, data_ptrs, coding_ptrs, size);
+        }
+    } else {
+        for (i = 0; edd > 0 && i < lastdrive; i++) {
+            target = data_fix[i];
+            jerasure_matrix_dotprod(k, w, decoding_matrix+(target*k), dm_ids, target, data_ptrs, coding_ptrs, size);
+            edd--;
+        }
+    }
+
+    /* Finally, re-encode coding devices */
+    for (i = 0; i < code_fix_size; i++) {
+        target = code_fix[i] - k;
+        jerasure_matrix_dotprod(k, w, matrix+(target*k), NULL, target+k, data_ptrs, coding_ptrs, size);
+    }
+
+    return 0;
+}
 
 inline int *jerasure_matrix_to_bitmatrix_setup(int k, int m, int w, int *matrix, int *bitmatrix) 
 {
@@ -750,107 +941,112 @@ int jerasure_bitmatrix_decode(int k, int m, int w, int *bitmatrix, int row_k_one
   return 0;
 }
 
-static char **set_up_ptrs_for_scheduled_decoding(int k, int m, int *erasures, char **data_ptrs, char **coding_ptrs)
+static inline char **set_up_ptrs_for_scheduled_decoding_setup(int k, int m, int *erasures, char **data_ptrs, char **coding_ptrs, char **ptrs)
 {
-  int ddf, cdf;
-  int *erased;
-  char **ptrs;
-  int i, j, x;
+    int ddf, cdf;
+    int *erased;
+    int erased_n[k+m+1];
+    int i, j, x;
 
-  ddf = 0;
-  cdf = 0;
-  for (i = 0; erasures[i] != -1; i++) {
-    if (erasures[i] < k) ddf++; else cdf++;
-  }
-  
-  erased = jerasure_erasures_to_erased(k, m, erasures);
-  if (erased == NULL) return NULL;
+    ddf = 0;
+    cdf = 0;
+    for (i = 0; erasures[i] != -1; i++) {
+        if (erasures[i] < k) ddf++; else cdf++;
+    }
 
-  /* Set up ptrs.  It will be as follows:
+    erased = jerasure_erasures_to_erased_noalloc(k, m, erasures, erased_n);
+    if (erased == NULL) return NULL;
+
+    /* Set up ptrs.  It will be as follows:
 
        - If data drive i has not failed, then ptrs[i] = data_ptrs[i].
-       - If data drive i has failed, then ptrs[i] = coding_ptrs[j], where j is the 
-            lowest unused non-failed coding drive.
+       - If data drive i has failed, then ptrs[i] = coding_ptrs[j], where j is the
+       lowest unused non-failed coding drive.
        - Elements k to k+ddf-1 are data_ptrs[] of the failed data drives.
        - Elements k+ddf to k+ddf+cdf-1 are coding_ptrs[] of the failed data drives.
 
        The array row_ids contains the ids of ptrs.
        The array ind_to_row_ids contains the row_id of drive i.
-  
-       However, we're going to set row_ids and ind_to_row in a different procedure.
-   */
-         
-  ptrs = talloc(char *, k+m);
-  if (!ptrs) {
-    free(erased);
-    return NULL;
-  }
 
-  j = k;
-  x = k;
-  for (i = 0; i < k; i++) {
-    if (erased[i] == 0) {
-      ptrs[i] = data_ptrs[i];
-    } else {
-      while (erased[j]) j++;
-      ptrs[i] = coding_ptrs[j-k];
-      j++;
-      ptrs[x] = data_ptrs[i];
-      x++;
+       However, we're going to set row_ids and ind_to_row in a different procedure.
+       */
+
+    j = k;
+    x = k;
+    for (i = 0; i < k; i++) {
+        if (erased[i] == 0) {
+            ptrs[i] = data_ptrs[i];
+        } else {
+            while (erased[j]) j++;
+            ptrs[i] = coding_ptrs[j-k];
+            j++;
+            ptrs[x] = data_ptrs[i];
+            x++;
+        }
     }
-  }
-  for (i = k; i < k+m; i++) {
-    if (erased[i]) {
-      ptrs[x] = coding_ptrs[i-k];
-      x++;
+    for (i = k; i < k+m; i++) {
+        if (erased[i]) {
+            ptrs[x] = coding_ptrs[i-k];
+            x++;
+        }
     }
-  }
-  free(erased);
-  return ptrs;
+    return ptrs;
+}
+
+static char **set_up_ptrs_for_scheduled_decoding_noalloc(int k, int m, int *erasures, char **data_ptrs, char **coding_ptrs, char **ptrs)
+{
+    return set_up_ptrs_for_scheduled_decoding_setup(k, m, erasures, data_ptrs, coding_ptrs, ptrs);
+}
+
+static char **set_up_ptrs_for_scheduled_decoding(int k, int m, int *erasures, char **data_ptrs, char **coding_ptrs)
+{
+  char** ptrs = talloc(char *, k+m);
+  if (!ptrs) return NULL;
+  return set_up_ptrs_for_scheduled_decoding_setup(k, m, erasures, data_ptrs, coding_ptrs, ptrs);
 }
 
 static int set_up_ids_for_scheduled_decoding(int k, int m, int *erasures, int *row_ids, int *ind_to_row)
 {
-  int ddf, cdf;
-  int *erased;
-  int i, j, x;
+    int ddf, cdf;
+    int *erased;
+    int erased_n[k+m+1];
+    int i, j, x;
 
-  ddf = 0;
-  cdf = 0;
-  for (i = 0; erasures[i] != -1; i++) {
-    if (erasures[i] < k) ddf++; else cdf++;
-  }
-  
-  erased = jerasure_erasures_to_erased(k, m, erasures);
-  if (erased == NULL) return -1;
-
-  /* See set_up_ptrs_for_scheduled_decoding for how these are set */
-
-  j = k;
-  x = k;
-  for (i = 0; i < k; i++) {
-    if (erased[i] == 0) {
-      row_ids[i] = i;
-      ind_to_row[i] = i;
-    } else {
-      while (erased[j]) j++;
-      row_ids[i] = j;
-      ind_to_row[j] = i;
-      j++;
-      row_ids[x] = i;
-      ind_to_row[i] = x;
-      x++;
+    ddf = 0;
+    cdf = 0;
+    for (i = 0; erasures[i] != -1; i++) {
+        if (erasures[i] < k) ddf++; else cdf++;
     }
-  }
-  for (i = k; i < k+m; i++) {
-    if (erased[i]) {
-      row_ids[x] = i;
-      ind_to_row[i] = x;
-      x++;
+
+    erased = jerasure_erasures_to_erased_noalloc(k, m, erasures, erased_n);
+    if (erased == NULL) return -1;
+
+    /* See set_up_ptrs_for_scheduled_decoding for how these are set */
+
+    j = k;
+    x = k;
+    for (i = 0; i < k; i++) {
+        if (erased[i] == 0) {
+            row_ids[i] = i;
+            ind_to_row[i] = i;
+        } else {
+            while (erased[j]) j++;
+            row_ids[i] = j;
+            ind_to_row[j] = i;
+            j++;
+            row_ids[x] = i;
+            ind_to_row[i] = x;
+            x++;
+        }
     }
-  }
-  free(erased);
-  return 0;
+    for (i = k; i < k+m; i++) {
+        if (erased[i]) {
+            row_ids[x] = i;
+            ind_to_row[i] = x;
+            x++;
+        }
+    }
+    return 0;
 }
 
 static int **jerasure_generate_decoding_schedule(int k, int m, int w, int *bitmatrix, int *erasures, int smart)
@@ -1008,6 +1204,228 @@ static int **jerasure_generate_decoding_schedule(int k, int m, int w, int *bitma
   return schedule;
 }
 
+static int **jerasure_generate_decoding_data_schedule_noalloc(int k, int m, int w, int *bitmatrix, int *erasures, int smart, int** smartptr)
+{
+    int i,x;
+    int *ptr;
+    int row_ids[k+m];
+    int ind_to_row[k+m];
+    int ddf, cdf;
+    int **schedule;
+
+    /* First, figure out the number of data drives that have failed, and the
+       number of coding drives that have failed: ddf and cdf */
+
+    ddf = 0;
+    cdf = 0;
+    for (i = 0; erasures[i] != -1; i++) {
+        if (erasures[i] < k) ddf++; else cdf++;
+    }
+
+    if (set_up_ids_for_scheduled_decoding(k, m, erasures, row_ids, ind_to_row) < 0) {
+        return NULL;
+    }
+
+    /* Now, we're going to create one decoding matrix which is going to
+       decode everything with one call.  The hope is that the scheduler
+       will do a good job.    This matrix has w*e rows, where e is the
+       number of erasures (ddf+cdf) */
+
+    int real_decoding_matrix [k*w*(cdf+ddf)*w];
+    int decoding_matrix[k*k*w*w];
+    int inverse[k*k*w*w];
+
+    /* First, if any data drives have failed, then initialize the first
+       ddf*w rows of the decoding matrix from the standard decoding
+       matrix inversion */
+
+    if (ddf > 0) {
+        ptr = decoding_matrix;
+        for (i = 0; i < k; i++) {
+            if (row_ids[i] == i) {
+                bzero(ptr, k*w*w*sizeof(int));
+                for (x = 0; x < w; x++) {
+                    ptr[x+i*w+x*k*w] = 1;
+                }
+            } else {
+                memcpy(ptr, bitmatrix+k*w*w*(row_ids[i]-k), k*w*w*sizeof(int));
+            }
+            ptr += (k*w*w);
+        }
+        jerasure_invert_bitmatrix(decoding_matrix, inverse, k*w);
+
+        /*    printf("\nMatrix to invert\n");
+              jerasure_print_bitmatrix(decoding_matrix, k*w, k*w, w);
+              printf("\n");
+              printf("\nInverse\n");
+              jerasure_print_bitmatrix(inverse, k*w, k*w, w);
+              printf("\n"); */
+
+        ptr = real_decoding_matrix;
+        for (i = 0; i < ddf; i++) {
+            memcpy(ptr, inverse+k*w*w*row_ids[k+i], sizeof(int)*k*w*w);
+            ptr += (k*w*w);
+        }
+    }
+
+    /*
+       printf("\n\nReal Decoding Matrix\n\n");
+       jerasure_print_bitmatrix(real_decoding_matrix, (ddf+cdf)*w, k*w, w);
+       printf("\n"); */
+
+    if (smart) {
+        schedule = jerasure_smart_bitmatrix_to_schedule_noalloc(k, ddf, w, real_decoding_matrix, smartptr);
+    } else {
+        schedule = jerasure_dumb_bitmatrix_to_schedule_noalloc(k, ddf, w, real_decoding_matrix, smartptr);
+    }
+    return schedule;
+}
+
+static int **jerasure_generate_decoding_selected_schedule_noalloc(
+        int k, int m, int w, int *bitmatrix,
+        int *erasures, int* selected, int smart, int **smartptr)
+{
+    int i, j, x, drive, y, index, z;
+    int *ptr;
+    int row_ids[k+m];
+    int ind_to_row[k+m];
+    int ddf, cdf;
+    int **schedule;
+    int *b1, *b2;
+
+    /* First, figure out the number of data drives that have failed, and the
+       number of coding drives that have failed: ddf and cdf */
+
+    ddf = 0;
+    cdf = 0;
+    for (i = 0; erasures[i] != -1; i++) {
+        if (erasures[i] < k) ddf++; else cdf++;
+    }
+
+    if (set_up_ids_for_scheduled_decoding(k, m, erasures, row_ids, ind_to_row) < 0) {
+        return NULL;
+    }
+
+    int data_fix_size, code_fix_size = 0;
+    int data_fix[k];
+    int code_fix[m];
+    convert_select(k, m, selected, data_fix, &data_fix_size, code_fix, &code_fix_size);
+    char fix_all_data = 0;
+    if ((data_fix_size == ddf) || (code_fix_size > 0))
+        fix_all_data = 1;
+    /* Now, we're going to create one decoding matrix which is going to
+       decode everything with one call.  The hope is that the scheduler
+       will do a good job.    This matrix has w*e rows, where e is the
+       number of erasures (ddf+cdf) */
+
+    int decoding_matrix_size = data_fix_size;
+    if (fix_all_data == 1)
+        decoding_matrix_size = ddf + code_fix_size;
+
+    int real_decoding_matrix [k*w*w*decoding_matrix_size];
+    int decoding_matrix[k*k*w*w];
+    int inverse[k*k*w*w];
+
+    /* First, if any data drives have failed, then initialize the first
+       ddf*w rows of the decoding matrix from the standard decoding
+       matrix inversion */
+
+    if (ddf > 0) {
+        ptr = decoding_matrix;
+        for (i = 0; i < k; i++) {
+            if (row_ids[i] == i) {
+                bzero(ptr, k*w*w*sizeof(int));
+                for (x = 0; x < w; x++) {
+                    ptr[x+i*w+x*k*w] = 1;
+                }
+            } else {
+                memcpy(ptr, bitmatrix+k*w*w*(row_ids[i]-k), k*w*w*sizeof(int));
+            }
+            ptr += (k*w*w);
+        }
+        jerasure_invert_bitmatrix(decoding_matrix, inverse, k*w);
+
+        /*    printf("\nMatrix to invert\n");
+              jerasure_print_bitmatrix(decoding_matrix, k*w, k*w, w);
+              printf("\n");
+              printf("\nInverse\n");
+              jerasure_print_bitmatrix(inverse, k*w, k*w, w);
+              printf("\n"); */
+
+        ptr = real_decoding_matrix;
+        if (fix_all_data == 1) {
+            for (i = 0; i < ddf; i++) {
+                memcpy(ptr, inverse+k*w*w*row_ids[k+i], sizeof(int)*k*w*w);
+                ptr += (k*w*w);
+            }
+        } else {
+            for (i = 0; i < data_fix_size; i++) {
+                memcpy(ptr, inverse+k*w*w*data_fix[i], sizeof(int)*k*w*w);
+                ptr += (k*w*w);
+            }
+        }
+    }
+
+    /* Next, here comes the hard part.  For each coding node that needs
+       to be decoded, you start by putting its rows of the distribution
+       matrix into the decoding matrix.  If there were no failed data
+       nodes, then you're done.  However, if there have been failed
+       data nodes, then you need to modify the columns that correspond
+       to the data nodes.  You do that by first zeroing them.  Then
+       whereever there is a one in the distribution matrix, you XOR
+       in the corresponding row from the failed data node's entry in
+       the decoding matrix.  The whole process kind of makes my head
+       spin, but it works.
+       */
+
+    //for (x = 0; x < cdf; x++) {
+    for (x = 0; x < code_fix_size; x++) {
+        //drive = row_ids[x+ddf+k]-k;
+        drive = code_fix[x] - k;
+        ptr = real_decoding_matrix + k*w*w*(ddf+x);
+        memcpy(ptr, bitmatrix+drive*k*w*w, sizeof(int)*k*w*w);
+
+        for (i = 0; i < k; i++) {
+            if (row_ids[i] != i) {
+                for (j = 0; j < w; j++) {
+                    bzero(ptr+j*k*w+i*w, sizeof(int)*w);
+                }
+            }
+        }
+
+        // There's the yucky part
+
+        index = drive*k*w*w;
+        for (i = 0; i < k; i++) {
+            if (row_ids[i] != i) {
+                b1 = real_decoding_matrix+(ind_to_row[i]-k)*k*w*w;
+                for (j = 0; j < w; j++) {
+                    b2 = ptr + j*k*w;
+                    for (y = 0; y < w; y++) {
+                        if (bitmatrix[index+j*k*w+i*w+y]) {
+                            for (z = 0; z < k*w; z++) {
+                                b2[z] = b2[z] ^ b1[z+y*k*w];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /*
+       printf("\n\nReal Decoding Matrix\n\n");
+       jerasure_print_bitmatrix(real_decoding_matrix, (ddf+cdf)*w, k*w, w);
+       printf("\n"); */
+
+    if (smart) {
+        schedule = jerasure_smart_bitmatrix_to_schedule_noalloc(k, decoding_matrix_size, w, real_decoding_matrix, smartptr);
+    } else {
+        schedule = jerasure_dumb_bitmatrix_to_schedule_noalloc(k, decoding_matrix_size, w, real_decoding_matrix, smartptr);
+    }
+    return schedule;
+}
+
 int jerasure_schedule_decode_lazy(int k, int m, int w, int *bitmatrix, int *erasures,
                             char **data_ptrs, char **coding_ptrs, int size, int packetsize, 
                             int smart)
@@ -1066,6 +1484,78 @@ int jerasure_schedule_decode_cache(int k, int m, int w, int ***scache, int *eras
   free(ptrs);
 
   return 0;
+}
+
+int jerasure_schedule_decode_data_lazy(int k, int m, int w, int *bitmatrix, int *erasures,
+        char **data_ptrs, char **coding_ptrs, int size, int packetsize,
+        int smart)
+{
+    int i, tdone;
+    char *ptrs_n[k+m];
+    char **ptrs = NULL;
+    int **schedule;
+    char need_fix = 0;
+    int cur = 0;
+    while ((cur < k+m) && (erasures[cur] != -1)) {
+        if (erasures[cur] < k) {
+            need_fix = 1;
+            break;
+        }
+        cur++;
+    }
+    if (need_fix == 0)
+        return 0;
+
+    ptrs = set_up_ptrs_for_scheduled_decoding_noalloc(k, m, erasures, data_ptrs, coding_ptrs, ptrs_n);
+    if (ptrs == NULL) return -1;
+
+    int smart_n[k*m*w*w+1][5];
+    int* smartptr[k*m*w*w+1];
+    for (i = 0; i < k*m*w*w+1; ++i) {
+        smartptr[i] = smart_n[i];
+    }
+    schedule = jerasure_generate_decoding_data_schedule_noalloc(k, m, w, bitmatrix, erasures, smart, smartptr);
+    if (schedule == NULL) {
+        return -1;
+    }
+
+    for (tdone = 0; tdone < size; tdone += packetsize*w) {
+        jerasure_do_scheduled_operations(ptrs, schedule, packetsize);
+        for (i = 0; i < k+m; i++) ptrs[i] += (packetsize*w);
+    }
+
+    return 0;
+}
+
+int jerasure_schedule_decode_selected_lazy(int k, int m, int w, int *bitmatrix, int *erasures,
+        int * selected,
+        char **data_ptrs, char **coding_ptrs, int size, int packetsize,
+        int smart)
+{
+    int i, tdone;
+    char *ptrs_n[k+m];
+    char **ptrs = NULL;
+    int **schedule;
+
+    ptrs = set_up_ptrs_for_scheduled_decoding_noalloc(k, m, erasures, data_ptrs, coding_ptrs, ptrs_n);
+    if (ptrs == NULL) return -1;
+
+    int smart_n[k*m*w*w+1][5];
+    int* smartptr[k*m*w*w+1];
+    for (i = 0; i < k*m*w*w+1; ++i) {
+        smartptr[i] = smart_n[i];
+    }
+    schedule = jerasure_generate_decoding_selected_schedule_noalloc(k, m, w, bitmatrix, erasures, selected, smart, smartptr);
+    if (schedule == NULL) {
+        return -1;
+    }
+
+    for (tdone = 0; tdone < size; tdone += packetsize*w) {
+        jerasure_do_scheduled_operations(ptrs, schedule, packetsize);
+        for (i = 0; i < k+m; i++) ptrs[i] += (packetsize*w);
+    }
+
+    return 0;
 }
 
 /* This only works when m = 2 */
