@@ -75,11 +75,11 @@ same arguments, and encoder.c does error check.
 #include "liberation.h"
 #include "timing.h"
 
-#define N 10
+#define N 13
 
-enum Coding_Technique {Reed_Sol_Van, Reed_Sol_R6_Op, Cauchy_Orig, Cauchy_Good, Liberation, Blaum_Roth, Liber8tion, RDP, EVENODD, No_Coding};
+enum Coding_Technique {Reed_Sol_Van, Reed_Sol_Van_noalloc, Reed_Sol_R6_Op, Cauchy_Orig, Cauchy_Good, Cauchy_Good_noalloc, Liberation, Liberation_noalloc, Blaum_Roth, Liber8tion, RDP, EVENODD, No_Coding};
 
-char *Methods[N] = {"reed_sol_van", "reed_sol_r6_op", "cauchy_orig", "cauchy_good", "liberation", "blaum_roth", "liber8tion", "rdp", "evenodd", "no_coding"};
+char *Methods[N] = {"reed_sol_van", "reed_sol_van_noalloc", "reed_sol_r6_op", "cauchy_orig", "cauchy_good", "cauchy_good_alloc", "liberation", "liberation_noalloc", "blaum_roth", "liber8tion", "rdp", "evenodd", "no_coding"};
 
 /* Global variables for signal handler */
 enum Coding_Technique method;
@@ -142,7 +142,7 @@ int main (int argc, char **argv) {
 	assert(curdir == getcwd(curdir, 1000));
 	
 	/* Begin recreation of file names */
-	cs1 = (char*)malloc(sizeof(char)*strlen(argv[1]));
+	cs1 = (char*)malloc(sizeof(char)*strlen(argv[1]) + 1);
 	cs2 = strrchr(argv[1], '/');
 	if (cs2 != NULL) {
 		cs2++;
@@ -158,7 +158,7 @@ int main (int argc, char **argv) {
 	} else {
            extension = strdup("");
         }	
-	fname = (char *)malloc(sizeof(char*)*(100+strlen(argv[1])+20));
+	fname = (char *)malloc(sizeof(char*)*(100+strlen(argv[1])+20+1));
 
 	/* Read in parameters from metadata file */
 	sprintf(fname, "%s/Coding/%s_meta.txt", curdir, cs1);
@@ -220,12 +220,18 @@ int main (int argc, char **argv) {
 	md = strlen(temp);
 	timing_set(&t3);
 
+    int matrix_n[k*m];
+    int bitmatrix_n[k*m*w*w];
+
 	/* Create coding matrix or bitmatrix */
 	switch(tech) {
 		case No_Coding:
 			break;
 		case Reed_Sol_Van:
 			matrix = reed_sol_vandermonde_coding_matrix(k, m, w);
+			break;
+		case Reed_Sol_Van_noalloc:
+			matrix = reed_sol_vandermonde_coding_matrix_noalloc(k, m, w, matrix_n);
 			break;
 		case Reed_Sol_R6_Op:
 			matrix = reed_sol_r6_coding_matrix(k, w);
@@ -238,9 +244,16 @@ int main (int argc, char **argv) {
 			matrix = cauchy_good_general_coding_matrix(k, m, w);
 			bitmatrix = jerasure_matrix_to_bitmatrix(k, m, w, matrix);
 			break;
+        case Cauchy_Good_noalloc:
+            matrix = cauchy_good_general_coding_matrix_noalloc(k, m, w, matrix_n);
+            bitmatrix = jerasure_matrix_to_bitmatrix_noalloc(k, m, w, matrix, bitmatrix_n);
+            break;
 		case Liberation:
 			bitmatrix = liberation_coding_bitmatrix(k, w);
 			break;
+        case Liberation_noalloc:
+            bitmatrix = liberation_coding_bitmatrix_noalloc(k, w, bitmatrix_n);
+            break;
 		case Blaum_Roth:
 			bitmatrix = blaum_roth_coding_bitmatrix(k, w);
 			break;
@@ -321,9 +334,15 @@ int main (int argc, char **argv) {
 		if (tech == Reed_Sol_Van || tech == Reed_Sol_R6_Op) {
 			i = jerasure_matrix_decode(k, m, w, matrix, 1, erasures, data, coding, blocksize);
 		}
+        else if (tech == Reed_Sol_Van_noalloc) {
+			i = jerasure_matrix_decode_data(k, m, w, matrix, 1, erasures, data, coding, blocksize);
+        }
 		else if (tech == Cauchy_Orig || tech == Cauchy_Good || tech == Liberation || tech == Blaum_Roth || tech == Liber8tion) {
 			i = jerasure_schedule_decode_lazy(k, m, w, bitmatrix, erasures, data, coding, blocksize, packetsize, 1);
 		}
+        else if (tech == Cauchy_Good_noalloc || tech == Liberation_noalloc) {
+			i = jerasure_schedule_decode_data_lazy(k, m, w, bitmatrix, erasures, data, coding, blocksize, packetsize, 1);
+        }
 		else {
 			fprintf(stderr, "Not a valid coding technique.\n");
 			exit(0);

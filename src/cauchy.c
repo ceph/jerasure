@@ -128,14 +128,10 @@ int cauchy_n_ones(int n, int w)
   return no;
 }
   
-int *cauchy_original_coding_matrix(int k, int m, int w)
+inline int *cauchy_original_coding_matrix_setup(int k, int m, int w, int *matrix)
 {
-  int *matrix;
   int i, j, index;
 
-  if (w < 31 && (k+m) > (1 << w)) return NULL;
-  matrix = talloc(int, k*m);
-  if (matrix == NULL) return NULL;
   index = 0;
   for (i = 0; i < m; i++) {
     for (j = 0; j < k; j++) {
@@ -146,13 +142,28 @@ int *cauchy_original_coding_matrix(int k, int m, int w)
   return matrix;
 }
 
-int *cauchy_xy_coding_matrix(int k, int m, int w, int *X, int *Y)
+int *cauchy_original_coding_matrix(int k, int m, int w)
 {
-  int index, i, j;
   int *matrix;
 
+  if (w < 31 && (k+m) > (1 << w)) return NULL;
+
   matrix = talloc(int, k*m);
-  if (matrix == NULL) { return NULL; }
+  if (matrix == NULL) return NULL;
+
+  return cauchy_original_coding_matrix_setup(k, m, w, matrix);
+}
+
+int *cauchy_original_coding_matrix_noalloc(int k, int m, int w, int *matrix)
+{
+  if (w < 31 && (k+m) > (1 << w)) return NULL;
+  return cauchy_original_coding_matrix_setup(k, m, w, matrix);
+}
+
+inline int *cauchy_xy_coding_matrix_setup(int k, int m, int w, int *X, int *Y, int *matrix)
+{
+  int index, i, j;
+
   index = 0;
   for (i = 0; i < m; i++) {
     for (j = 0; j < k; j++) {
@@ -161,6 +172,21 @@ int *cauchy_xy_coding_matrix(int k, int m, int w, int *X, int *Y)
     }
   }
   return matrix;
+}
+
+int *cauchy_xy_coding_matrix(int k, int m, int w, int *X, int *Y)
+{
+  int *matrix;
+
+  matrix = talloc(int, k*m);
+  if (matrix == NULL) { return NULL; }
+  
+  return cauchy_xy_coding_matrix_setup(k, m, w, X, Y, matrix);
+}
+
+int *cauchy_xy_coding_matrix_noalloc(int k, int m, int w, int *X, int *Y, int *matrix)
+{
+    return cauchy_xy_coding_matrix_setup(k, m, w, X, Y, matrix);
 }
 
 void cauchy_improve_coding_matrix(int k, int m, int w, int *matrix)
@@ -206,13 +232,11 @@ void cauchy_improve_coding_matrix(int k, int m, int w, int *matrix)
   }
 }
 
-int *cauchy_good_general_coding_matrix(int k, int m, int w)
+inline int *cauchy_good_general_coding_matrix_setup(int k, int m, int w, int *matrix)
 {
-  int *matrix, i;
+  int i;
 
   if (m == 2 && k <= cbest_max_k[w]) {
-    matrix = talloc(int, k*m);
-    if (matrix == NULL) return NULL;
     if (!cbest_init) {
       cbest_init = 1;
       cbest_all[0] = cbest_0; cbest_all[1] = cbest_1; cbest_all[2] = cbest_2; cbest_all[3] = cbest_3; cbest_all[4] =
@@ -230,11 +254,25 @@ int *cauchy_good_general_coding_matrix(int k, int m, int w)
     }
     return matrix;
   } else {
-    matrix = cauchy_original_coding_matrix(k, m, w);
+    matrix = cauchy_original_coding_matrix_noalloc(k, m, w, matrix);
     if (matrix == NULL) return NULL;
     cauchy_improve_coding_matrix(k, m, w, matrix);
     return matrix;
   }
+}
+
+int *cauchy_good_general_coding_matrix(int k, int m, int w)
+{
+    int *matrix;
+    matrix = talloc(int, k*m);
+    if (matrix == NULL) return NULL;
+
+    return cauchy_good_general_coding_matrix_setup(k, m, w, matrix);
+}
+
+int *cauchy_good_general_coding_matrix_noalloc(int k, int m, int w, int *matrix)
+{
+    return cauchy_good_general_coding_matrix_setup(k, m, w, matrix);
 }
 
 static int cbest_2[3] = { 1, 2, 3 };
