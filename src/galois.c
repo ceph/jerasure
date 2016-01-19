@@ -53,7 +53,13 @@
 #include "galois.h"
 
 #define MAX_GF_INSTANCES 64
-gf_t *gfp_array[MAX_GF_INSTANCES] = { 0 };
+
+#define SCRATCH_SIZE    (256 << 10)
+#define SCRATCH_POOL_SIZE   (SCRATCH_SIZE * 4)
+char scratch_pool[SCRATCH_POOL_SIZE] = { 0 };
+gf_t gfp_array_noalloc[4];
+
+gf_t* gfp_array[MAX_GF_INSTANCES] = { 0 };
 int  gfp_is_composite[MAX_GF_INSTANCES] = { 0 };
 
 gf_t *galois_get_field_ptr(int w)
@@ -170,6 +176,29 @@ gf_t* galois_init_composite_field(int w,
   return gfp;
 }
 
+int galois_init_default_field_noalloc(int w)
+{
+    int tar = 0;
+    switch(w) {
+        case 8:
+            tar = 0;
+            break;
+        case 16:
+            tar = 1;
+            break;
+        case 32:
+            tar = 2;
+            break;
+        default:
+            return EINVAL;
+    }
+    char* ptr = scratch_pool + tar * SCRATCH_SIZE;
+    gfp_array[w] = &gfp_array_noalloc[tar];
+    if (!gf_init_hard(gfp_array[w], w, GF_MULT_DEFAULT, GF_REGION_DEFAULT, GF_DIVIDE_DEFAULT, 0, 0, 0, NULL, ptr))
+        return EINVAL;
+    return 0;
+}
+
 int galois_init_default_field(int w)
 {
   if (gfp_array[w] == NULL) {
@@ -201,7 +230,18 @@ static void galois_init(int w)
     assert(0);
   }
 
-  switch (galois_init_default_field(w)) {
+  int ret = 0;
+  switch (w) {
+    case 8:
+    case 16:
+    case 32:
+        ret = galois_init_default_field_noalloc(w);
+        break;
+    default:
+        ret = galois_init_default_field(w);
+        break;
+  }
+  switch(ret) {
   case ENOMEM:
     fprintf(stderr, "ERROR -- cannot allocate memory for Galois field w=%d\n", w);
     assert(0);
