@@ -136,7 +136,7 @@ static gf_t GF32;
 void reed_sol_galois_w32_region_multby_2(char *region, int nbytes)
 {
   if (prim32 == -1) {
-    prim32 = galois_single_multiply((1 << 31), 2, 32);
+    prim32 = galois_single_multiply(((gf_val_32_t)1 << 31), 2, 32);
     if (!gf_init_hard(&GF32, 32, GF_MULT_BYTWO_b, GF_REGION_DEFAULT, GF_DIVIDE_DEFAULT,
                       prim32, 0, 0, NULL, NULL)) {
       fprintf(stderr, "Error: Can't initialize the GF for reed_sol_galois_w32_region_multby_2\n");
