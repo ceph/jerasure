@@ -1,3 +1,5 @@
+Jrasure
+
 This is revision 2.0 of Jerasure.  This is pretty much Jerasure 1.2 without the
 original Galois Field backend.  Version 2.0 links directly to GF-Complete, which
 is more flexible than the original, and *much* faster, because it leverages SIMD
